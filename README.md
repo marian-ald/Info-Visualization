@@ -2,6 +2,7 @@
 Work travels by members of a research lab.
 Visualization implemented with D3.v6
 
+Check `report.pdf` for visualization samples and documentation.
 
 
 In order to run the visualization:
