@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+
+<div class="col-sm-2"><p id="value-range"></p></div>
+<div class="col-sm"><div id="slider-range"></div></div>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<style type="text/css" media="screen, print">
+			body  { margin: 30px 50px; font-family: sans-serif; }
+			line, polyline, path { stroke: black; fill: none; }
+
+		</style>
+		<title>Subsets CO<sub>2</sub> emissions</title>
+	</head>
+	<body>
+		<h1>Subsets CO<sub>2</sub> emissions</h1>
+		<p>Hover and click on the below CDF plot to select/remove users from the analysis.</p>
+		<script src="https://d3js.org/d3.v6.min.js"></script>
+		<script>
+		
+
+var parse_time = d3.timeParse("%Y-%m-%d");
+var format_percent = d3.format('.0%');
+
+var body = d3.select("body");
+
+// Dimensions SVGs
+var margin_up = {top: 50, right: 100, bottom: 100, left: 50},
+	width_up = 850 - margin_up.left - margin_up.right,
+    height_up = 550 - margin_up.top - margin_up.bottom;
+
+var margin_down = {top: 20, right: 10, bottom: 40, left:40},
+	width_down = 425 - margin_down.left - margin_down.right,
+    height_down = 300 - margin_down.top - margin_down.bottom;
+
+
+var svgs = [];
+
+svg = d3.select('body').append('svg')
+			.attr('width', width_up + margin_up.left + margin_up.right)
+			.attr('height', height_up + margin_up.top + margin_up.bottom)
+			.append('g')
+			.attr('transform', `translate(${margin_up.left},${margin_up.top})`);
+svgs.push(svg);
+
+// Add SVGs to the body
+function add_svgs(params) {
+	for (let i = 1; i < 6; i++) {
+		var svg;
+		if (i < 2) {
+			svg = d3.select('body').append('svg')
+				.attr('width', width_up + margin_up.left + margin_up.right)
+				.attr('height', height_up + margin_up.top + margin_up.bottom)
+				.append('g')
+				.attr('transform', `translate(${margin_up.left},${margin_up.top})`);
+		} else {
+			svg = d3.select('body').append('svg')
+				.attr('width', width_down + margin_down.left + margin_down.right)
+				.attr('height', height_down + margin_down.top + margin_down.bottom)
+				.append('g')
+				.attr('transform', `translate(${margin_down.left},${margin_down.top})`);
+		}
+		svgs.push(svg);
+	}
+}
+add_svgs();
+
+function remove_svgs() {
+	for (let i = 1; i < 6; i++) {
+		svgs[i].selectAll("*").remove();
+	}
+}
+
+var x = d3.scaleLinear()
+		.range([0, width_up])
+		.clamp(true);
+
+var y = d3.scaleLinear()
+  		.range([height_up, 0])
+  	  	.clamp(true);
+
+
+Promise.all([
+
+	d3.tsv("../data/missions.tsv", d => ({
+		mission_id: +d['#mission_id'],
+		user_id:    +d.user_id,
+		place_id:   +d.place_id,
+		date:        parse_time(d.date),
+		duration:   +d.duration,
+		mode:        d.mode,
+		co2:        +d.co2,
+	})),
+	d3.tsv("../data/users.tsv", d => ({
+		user_id:    +d['#user_id'],
+		name:        d.name,
+		house:       d.house,
+		institution: d.institution,
+		rank:		 d.rank,
+		title:       d.title,
+		region:      d.region,
+	})),
+	d3.tsv("../data/places.tsv", d => ({
+		place_id:  +d['#place_id'],
+		distance:  +d.distance,
+		country:    d.country,
+	})),
+
+]).then(function(data) {
+
+	let missions  = data[0];
+	let users     = Object.fromEntries(data[1].map(u => [u.user_id, u]));
+	let places	  = Object.fromEntries(data[2].map(p => [p.place_id, p]));
+
+
+	let ranks = {'A':11, 'B':10, 'C':9, 'D':8, 'E':7, 'F':6, 'G':5, 'H':4, 'I':3, 'J':2, 'K':1};
+	let titles = ['Maester', 'Septon', 'Knight', 'Magister'];
+	let regions = ["North", "Reach", "Westerlands", "Crownlands", "Riverlands", "Dorne", "Vale"];
+	let institutions = ["Faith of the Seven", "Pagan", "Many-Faced God", "Old Gods", "Lord of Light"];
+	let houses = ["Hunter","Rykker","Tarly","Dayne","Thorne","Byrch","Gaunt","Corbray","Sunglass","Royce",
+			"Glover","Karstark","Mormont","Crakehall","Darry","Florent","Peake","Martell","Arryn","Umber",
+			"Redwyne","Hightower","Yronwood","Rivers","Bracken","Tyrell","Farman","Lannister","Stark",
+			"Oakheart","Sand","Frey","Beesbury","Flint","Hill","Blackwood","Manderly","Mallister","Manwoody"];
+
+	// emission per user
+	let nb_rects = 6;
+	let nb_users = Object.keys(users).length;
+	let emissions = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+	let emissions_bkp = Object.fromEntries(Object.keys(users).map(u_id => [u_id, 0]));
+	for(let mission of missions) {
+		emissions[mission.user_id] += mission.co2 * places[mission.place_id].distance / 1000; // tons of CO2
+	}
+
+	emissions = Object.values(emissions);
+	emissions.sort((a, b) => a-b);
+	for (let i = 0; i < nb_users; i++) {
+		emissions_bkp[i] = emissions[i];
+		
+	}
+
+	let cemissions = d3.cumsum(emissions);
+	
+	selected_users = 512 / nb_rects;
+
+	function remove_emissions(index) {
+		let start_pos = Math.floor(index * selected_users);
+		for (let i = start_pos; i < (index + 1)*selected_users; i++) {
+			emissions[i] = 0;
+		}
+	}
+	function redo_emissions(index) {
+		let start_pos = Math.floor(index * selected_users);
+		for (let i = start_pos; i < (index + 1)*selected_users; i++) {
+			emissions[i] = emissions_bkp[i];
+		}
+	}
+
+	let [u0, u1] = [0, cemissions.length-1];
+	let [t0, t1] = [0, cemissions[u1]];
+	x.domain([u0, u1]);
+	y.domain([t0, t1]);
+	
+
+	var bars = svgs[0].selectAll('g')
+		.data(cemissions)
+		.enter()
+		.append('rect')
+		.attr('x', function(d, i) { return x(i);})
+		.attr('y', function(d, i) { return (width_up - d + 103)/2;})
+		.attr('width', width_up/(2*cemissions.length))
+		.attr('height', function(d) { return d/2; })
+		.attr('fill', 'blue')
+		.style('fill-opacity', 1)
+		.style('opacity', 'blue')
+		;
+
+	let cdf = d3.line()
+		.x((d, i) => x(i))
+		.y((d, i) => y(d));
+
+	let line = svgs[0].append('path').datum(cemissions)
+		.attr('d', cdf);
+	
+	let xAxis = d3.axisBottom(x);
+	svgs[0].append('g')
+		.attr('transform', `translate(0,${y(u0)+23})`)
+		.call(xAxis);
+
+	svgs[0].append('text')
+		.text("# users")
+		.attr('text-anchor', 'end')
+		.attr('x', x(cemissions.length))
+		.attr('y', y(u0)+55);
+	
+	let yAxis = d3.axisRight(y);   
+	svgs[0].append('g')
+		.attr('transform', `translate(${x(u1)+22})`)
+		.call(yAxis);
+
+	svgs[0].append('text')
+		.text("tons of CO2")
+		.attr('transform', `translate(${x(u1)+65},${y(t1)}) rotate(-90)`)
+		.attr('text-anchor', 'end');
+	
+	let [x0, x1] = x.range();
+	let [y0, y1] = y.range();
+	
+	// *************************************************************************************
+	draw_svgs();
+
+	let states = [3, 3, 3, 3, 3, 3];
+	function change_state(state, ev) {
+		// ev = {0:click, 1:in, 2:out}
+		if (state == 0 && ev == 1) {
+			return 1;
+		} else if (state == 1 && ev == 0) {
+			return 2;
+		} else if (state == 2 && ev == 2) {
+			return 3;
+		} else if (state == 3 && ev == 1) {
+			return 2;
+		} else if (state == 2 && ev == 0) {
+			return 1;
+		} else if (state == 1 && ev == 2) {
+			return 0;
+		}
+	}
+
+	function get_color_and_opac(state) {
+  		if (state == 0) {
+			return ['green', 0.0];
+		} else if (state == 1){
+			return ['green', 0.2];
+		} else if (state == 2){
+			return ['blue', 0.5];
+		} else if (state == 3){
+			return ['blue', 0.3];
+		}
+	}
+
+	one_third_width = width_up / nb_rects;
+	rects = [];
+	bgs = [];
+
+	for (let rect_ind = 0; rect_ind < nb_rects; rect_ind++) {	
+		rect = svgs[0].append('rect')
+			.attr('x', rect_ind * one_third_width)
+			.attr('y', 0)
+			.attr('width', one_third_width)
+			.attr('height', height_up)
+			.attr('fill-opacity', 0.4)
+			.attr('fill', 'blue');
+		rects.push(rect);
+
+		let bg = svgs[0].append('rect') // to capture mouse events
+		.attr('fill-opacity', 0)
+		.attr('x', rect_ind * one_third_width)
+		.attr('y', 0)
+		.attr('width', one_third_width)
+		.attr('height', height_up);
+
+		bgs.push(bg);
+	}
+
+	for (let rect_ind = 0; rect_ind < nb_rects; rect_ind++) {	
+
+		bgs[rect_ind].on('click', function(event) {
+			let [xm, ym] = d3.pointer(event);
+			states[rect_ind] = change_state(states[rect_ind], 0); // click:0
+			if (states[rect_ind] == 2) {
+				// Add emissions for this index
+				redo_emissions(rect_ind);
+				remove_svgs();
+				draw_svgs();
+			} else {
+				// Remove emissions for this index
+				remove_emissions(rect_ind);
+				remove_svgs();
+				draw_svgs();
+			}
+			[color, opac] = get_color_and_opac(states[rect_ind]);
+			rects[rect_ind].attr('fill-opacity', opac)
+			rects[rect_ind].attr('fill', color);
+		});
+		bgs[rect_ind].on('mouseover', function(event) {
+			let [xm, ym] = d3.pointer(event);
+			states[rect_ind] = change_state(states[rect_ind], 1); // over:1
+			[color, opac] = get_color_and_opac(states[rect_ind]);
+			rects[rect_ind].attr('fill-opacity', opac);
+			rects[rect_ind].attr('fill', color);
+		});
+		bgs[rect_ind].on('mouseout', function(event) {
+			states[rect_ind] = change_state(states[rect_ind], 2); // out:2
+			[color, opac] = get_color_and_opac(states[rect_ind]);
+			rects[rect_ind].attr('fill-opacity', opac);
+			rects[rect_ind].attr('fill', color);
+		});
+	}
+
+
+
+	// *************************************************************************************
+
+	function draw_svgs() {
+	// _______________________________svg2: Rank_______________________________
+	// Scales
+    var xScale_rank = d3.scaleBand().range([0, width_down]).padding(0.4),
+    	yScale_rank = d3.scaleLinear().range ([height_down, 0]);
+	
+	var g_svg2 = svgs[2].append('g')
+
+	// Compute the co2 distribution over ranks
+	let ranks_distrib = Object.fromEntries(Object.keys(ranks).map(r_key => [r_key, 0]));
+	let co2_ranks_distrib = Object.fromEntries(Object.keys(ranks).map(r_key => [r_key, 0]));
+
+	dic={}
+	// Normalize by the number of users inside a rank
+	for(let [user_id, user] of Object.entries(users)) {
+		if (emissions[user.rank] != 0) {
+			co2_ranks_distrib[user.rank] += emissions[user_id]
+			ranks_distrib[user.rank] += 1
+		}
+	}
+
+	for(let [rank, _] of Object.entries(co2_ranks_distrib)) {
+		co2_ranks_distrib[rank] = co2_ranks_distrib[rank] / ranks_distrib[rank]
+	}
+
+	xScale_rank.domain(Object.keys(co2_ranks_distrib))
+	yScale_rank.domain([0, d3.max(Object.values(co2_ranks_distrib))])
+
+	g_svg2.append("g")
+		.attr("transform", "translate(0," + height_down + ")")
+		.call(d3.axisBottom(xScale_rank))
+		.append("text");
+	
+	// Add axis labels to svg2
+	g_svg2.append('text')
+		.text("Ranks")
+		.attr('text-anchor', 'end')
+		.attr('x', width_down)
+		.attr('y', height_down + 35);
+
+	g_svg2.append('text')
+		.text("tons of CO2/pers")
+		.attr('transform', `translate(${50},${-3})`)
+		.style("font-size","12px")
+		.attr('text-anchor', 'end');
+	
+	g_svg2.append("g")
+		.call(d3.axisLeft(yScale_rank).ticks(10))
+		.append("text")
+		.attr("y", 6)
+		.attr("dy", "0.71em")
+		.attr("text-anchor", "end")
+		.text("value");
+
+	g_svg2.selectAll('bar')
+		.data(Object.keys(co2_ranks_distrib))
+		.enter()
+		.append('rect')
+		.attr('class', 'bar')
+		.attr("x", function(d) { return xScale_rank(d); })
+		.attr("y", function(d) { return yScale_rank(co2_ranks_distrib[d]); })
+		.attr("width", xScale_rank.bandwidth())
+		.attr("height", function(d) { return height_down - yScale_rank(co2_ranks_distrib[d]);})
+		.attr('fill', 'slateblue')
+		;
+
+
+	// _______________________________svg3: Title_______________________________
+	// Scales
+    var xScale_title = d3.scaleBand().range([0, width_down]).padding(0.45),
+    	yScale_title = d3.scaleLinear().range ([height_down, 0]);
+	
+	var g_svg3 = svgs[3].append('g')
+	
+	// Compute the co2 distribution over title
+	let titles_distrib = Object.fromEntries(titles.map(r_key => [r_key, 0]));
+	let co2_titles_distrib = Object.fromEntries(titles.map(r_key => [r_key, 0]));
+
+	// Normalize by the number of users inside a title
+	for(let [user_id, user] of Object.entries(users)) {
+		if (emissions[user.rank] != 0) {
+			co2_titles_distrib[user.title] += emissions[user_id]
+			titles_distrib[user.title] += 1
+		}
+	}
+
+	for(let [title, _] of Object.entries(co2_titles_distrib)) {
+		co2_titles_distrib[title] = co2_titles_distrib[title] / titles_distrib[title]
+	}
+
+	xScale_title.domain(Object.keys(co2_titles_distrib))
+	yScale_title.domain([0, d3.max(Object.values(co2_titles_distrib))])
+
+	g_svg3.append("g")
+		.attr("transform", "translate(0," + height_down + ")")
+		.call(d3.axisBottom(xScale_title))
+		.append("text");
+	
+	// Add axis labels to svg3
+	g_svg3.append('text')
+		.text("Titles")
+		.attr('text-anchor', 'end')
+		.attr('x', width_down)
+		.attr('y', height_down + 35);
+
+	g_svg3.append('text')
+		.text("tons of CO2/pers")
+		.attr('transform', `translate(${50},${-3})`)
+		.style("font-size","12px")
+		.attr('text-anchor', 'end');
+	
+
+	g_svg3.append("g")
+		.call(d3.axisLeft(yScale_title).ticks(10))
+		.append("text")
+		.attr("y", 6)
+		.attr("dy", "0.71em")
+		.attr("text-anchor", "end")
+		.text("value");
+
+	g_svg3.selectAll('bar')
+		.data(Object.keys(co2_titles_distrib))
+		.enter()
+		.append('rect')
+		.attr('class', 'bar')
+		.attr("x", function(d) { return xScale_title(d); })
+		.attr("y", function(d) { return yScale_title(co2_titles_distrib[d]); })
+		.attr('transform', `translate(${13},${0})`)
+		.attr("width", 20)
+		.attr("height", function(d) { return height_down - yScale_title(co2_titles_distrib[d]);})
+		.attr('fill', 'green')
+		;
+
+
+	// _______________________________svg4: Regions_______________________________
+	// Scales
+    var xScale_region = d3.scaleBand().range([0, width_down+10]).padding(0.4),
+    	yScale_region = d3.scaleLinear().range ([height_down, 0]);
+	
+	var g_svg4 = svgs[4].append('g')
+
+	// Compute the co2 distribution over region
+	let regions_distrib = Object.fromEntries(regions.map(r_key => [r_key, 0]));
+	let co2_regions_distrib = Object.fromEntries(regions.map(r_key => [r_key, 0]));
+
+	// Normalize by the number of users inside a region
+	for(let [user_id, user] of Object.entries(users)) {
+		if (emissions[user.rank] != 0) {
+			co2_regions_distrib[user.region] += emissions[user_id]
+			regions_distrib[user.region] += 1
+		}
+	}
+
+	for(let [region, _] of Object.entries(co2_regions_distrib)) {
+		co2_regions_distrib[region] = co2_regions_distrib[region] / regions_distrib[region]
+	}
+
+	xScale_region.domain(Object.keys(co2_regions_distrib))
+	yScale_region.domain([0, d3.max(Object.values(co2_regions_distrib))])
+
+	g_svg4.append("g")
+		.attr("transform", "translate(0," + height_down + ")")
+		.call(d3.axisBottom(xScale_region))
+		.selectAll('text')
+		.attr("text-anchor", "end")
+		.attr("transform", `rotate(-20)`);
+	
+	// Add axis labels to svg3
+	g_svg4.append('text')
+		.text("Regions")
+		.attr('text-anchor', 'end')
+		.attr('x', width_down+9)
+		.attr('y', height_down + 35);
+
+	g_svg4.append('text')
+		.text("tons of CO2/pers")
+		.attr('transform', `translate(${50},${-3})`)
+		.style("font-size","12px")
+		.attr('text-anchor', 'end');
+	
+
+	g_svg4.append("g")
+		.call(d3.axisLeft(yScale_region).ticks(10))
+		.append("text")
+		.attr("y", 6)
+		.attr("dy", "0.71em")
+		.attr("text-anchor", "end")
+		.text("value");
+
+
+	g_svg4.selectAll('bar')
+		.data(Object.keys(co2_regions_distrib))
+		.enter()
+		.append('rect')
+		.attr('class', 'bar')
+		.attr("x", function(d) { return xScale_region(d); })
+		.attr("y", function(d) { return yScale_region(co2_regions_distrib[d]); })
+		.attr('transform', `translate(${5},${0})`)
+		.attr("width", 20)
+		.attr("height", function(d) { return height_down - yScale_region(co2_regions_distrib[d]);})
+		.attr('fill', 'orange')
+		;
+
+
+	// _______________________________svg5: Institutions_______________________________
+	// Scales
+    var xScale_institution = d3.scaleBand().range([0, width_down+10]).padding(0.4),
+    	yScale_institution = d3.scaleLinear().range ([height_down, 0]);
+	
+	var g_svg5 = svgs[5].append('g')
+
+	// Compute the co2 distribution over institution
+	let institutions_distrib = Object.fromEntries(institutions.map(r_key => [r_key, 0]));
+	let co2_institutions_distrib = Object.fromEntries(institutions.map(r_key => [r_key, 0]));
+
+	// Normalize by the number of users inside a institution
+	for(let [user_id, user] of Object.entries(users)) {
+		if (emissions[user.rank] != 0) {
+			let institution_aux = ""
+			// If an user doesn't belong to any institution, we consider him an pagan
+			if (user.institution == "")
+			{
+				institution_aux='Pagan'
+			}
+			else{
+				institution_aux=user.institution
+			}
+			co2_institutions_distrib[institution_aux] += emissions[user_id]
+			institutions_distrib[institution_aux] += 1
+		}
+	}
+
+	for(let [institution, _] of Object.entries(co2_institutions_distrib)) {
+		co2_institutions_distrib[institution] = co2_institutions_distrib[institution] / institutions_distrib[institution]
+	}
+
+	xScale_institution.domain(Object.keys(co2_institutions_distrib))
+	yScale_institution.domain([0, d3.max(Object.values(co2_institutions_distrib))])
+
+	g_svg5.append("g")
+		.attr("transform", "translate(0," + height_down + ")")
+		.call(d3.axisBottom(xScale_institution))
+		.append("text");
+	
+	// Add axis labels to svg3
+	g_svg5.append('text')
+		.text("Institutions")
+		.attr('text-anchor', 'end')
+		.attr('x', width_down)
+		.attr('y', height_down + 35);
+
+	g_svg5.append('text')
+		.text("tons of CO2/pers")
+		.attr('transform', `translate(${50},${-3})`)
+		.style("font-size","12px")
+		.attr('text-anchor', 'end');
+	
+
+	g_svg5.append("g")
+		.call(d3.axisLeft(yScale_institution).ticks(10))
+		.append("text")
+		.attr("y", 6)
+		.attr("dy", "0.71em")
+		.attr("text-anchor", "end")
+		.text("value");
+
+	g_svg5.selectAll('bar')
+		.data(Object.keys(co2_institutions_distrib))
+		.enter()
+		.append('rect')
+		.attr('class', 'bar')
+		.attr("x", function(d) { return xScale_institution(d); })
+		.attr("y", function(d) { return yScale_institution(co2_institutions_distrib[d]); })
+		.attr('transform', `translate(${9},${0})`)
+		.attr("width", 20)
+		.attr("height", function(d) { return height_down - yScale_institution(co2_institutions_distrib[d]);})
+		.attr('fill', 'brown')
+		;
+
+
+	// _______________________________svg1: Houses_______________________________
+	// Scales
+    var xScale_house = d3.scaleBand().range([0, width_up+10]).padding(0.4),
+    	yScale_house = d3.scaleLinear().range ([height_up, 0]);
+	
+	var g_svg1 = svgs[1].append('g')
+
+	// Compute the co2 distribution over house
+	let houses_distrib = Object.fromEntries(houses.map(r_key => [r_key, 0]));
+	let co2_houses_distrib = Object.fromEntries(houses.map(r_key => [r_key, 0]));
+
+	// Normalize by the number of users inside a house
+	for(let [user_id, user] of Object.entries(users)) {
+		if (emissions[user.rank] != 0) {
+			co2_houses_distrib[user.house] += emissions[user_id]
+			houses_distrib[user.house] += 1
+		}
+	}
+
+	for(let [house, _] of Object.entries(co2_houses_distrib)) {
+		co2_houses_distrib[house] = co2_houses_distrib[house] / houses_distrib[house]
+	}
+
+	// Sort the houses by the CO2 emissions
+	var items = Object.keys(co2_houses_distrib).map(function(key) {
+		return [key, co2_houses_distrib[key]];
+	});
+
+	// Sort the array based on the second element
+	items.sort(function(first, second) {
+  		return -(second[1] - first[1]);
+	});
+	keys = Object.entries(items.map(elem => elem[0]));
+
+	xScale_house.domain(Object.keys(co2_houses_distrib))
+	yScale_house.domain([0, d3.max(Object.values(co2_houses_distrib))])
+
+	g_svg1.append("g")
+		.attr("transform", "translate(0," + height_up + ")")
+		.call(d3.axisBottom(xScale_house))
+		.selectAll('text')
+		.attr("text-anchor", "end")
+		.attr("transform", `rotate(-50)`);
+	
+	// Add axis labels to svg3
+	g_svg1.append('text')
+		.text("Houses")
+		.attr('text-anchor', 'end')
+		.attr('x', width_up+65)
+		.attr('y', height_up + 35);
+
+	g_svg1.append('text')
+		.text("tons of CO2/pers")
+		.attr('transform', `translate(${-35},${0}) rotate(-90)`)
+		.attr('text-anchor', 'end');
+
+	g_svg1.append("g")
+		.call(d3.axisLeft(yScale_house).ticks(10))
+		.append("text")
+		.attr("y", 6)
+		.attr("dy", "0.71em")
+		.attr("text-anchor", "end")
+		.text("value");
+
+	g_svg1.selectAll('bar')
+		.data(Object.keys(co2_houses_distrib))
+		.enter()
+		.append('rect')
+		.attr('class', 'bar')
+		.attr("x", function(d) { return xScale_house(d); })
+		.attr("y", function(d) { return yScale_house(co2_houses_distrib[d]); })
+		.attr('transform', `translate(${-5},${0})`)
+		.attr("width", 16.9)
+		.attr("height", function(d) { return height_up - yScale_house(co2_houses_distrib[d]);})
+		.attr('fill', 'black')
+		.attr('opacity', '0.8')
+		;
+	}
+});
+		</script>
+	</body>
+</html>

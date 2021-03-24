@@ -1,0 +1,12 @@
+\begin{thebibliography}{1}
+
+\bibitem{dc}
+Dimensional charting.
+\newblock \url{https://dc-js.github.io/dc.js/}.
+
+\bibitem{crossfilter}
+Mike Bostock.
+\newblock Crossfilter.
+\newblock \url{https://square.github.io/crossfilter/}.
+
+\end{thebibliography}
